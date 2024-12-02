@@ -1,0 +1,139 @@
+---
+title: "p8105_hw6_cr3442"
+author: "Cheng Rao"
+date: "2024-12-02"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(viridis)
+library(cowplot)
+library(patchwork)
+library(modelr)
+library(p8105.datasets)
+knitr::opts_chunk$set(
+  fig.width = 6,
+  fig.asp = 0.6,
+  out.width = "100%"
+)
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+options(
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continuous.fill = "viridis",
+  digits = 3
+)
+scale_colour_discrete = scale_color_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
+set.seed(2844)
+```
+
+# Problem 1
+
+First import the data.
+\
+```{r rnoaa_import, include = F , cache = TRUE}
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2017-01-01",
+    date_max = "2017-12-31") %>%
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) %>%
+  select(name, id, everything())
+```
+\
+Then take a look of the regression.
+\
+```{r rnoaa_reg}
+weather_df %>%
+  ggplot(aes(x = tmin, y = tmax)) +
+  geom_point(alpha = .3) +
+  geom_smooth(method = "lm",se = F)
+```
+\
+
+Let's bootstraping.
+\
+```{r bootstrap,cache = T}
+weather_boot = 
+  weather_df %>% 
+  bootstrap(n = 5000) %>%
+  mutate(
+    models = map(strap, ~lm(tmax ~ tmin, data = .x)),
+    results = map(models, broom::tidy),
+    glanced = map(models, broom::glance)
+    ) %>% 
+  select(-strap, -models) %>% 
+  unnest(c(results, glanced), names_repair = "unique") %>% 
+  select(.id, term, estimate, r.squared) %>% 
+  mutate(
+    term = str_replace(term, "\\(Intercept\\)", "intercept")
+  ) %>% 
+  pivot_wider(
+    names_from = term,
+    values_from = estimate
+  ) %>% 
+  mutate(
+    intersection = log(intercept * tmin),
+    .id = as.numeric(.id)
+  ) %>% 
+  select(-intercept, -tmin)
+```
+
+Let's plot the distribution of r square.
+\
+```{r rsquare_plt}
+weather_boot %>% 
+  ggplot(aes(x = r.squared)) +
+  geom_density() +
+  labs(
+    title = "Distribution of Estimates of R-squared",
+    x = "R-square estimates",
+    y = "Density"
+  ) +
+  scale_x_continuous(
+    breaks = seq(.85,.95,.01)
+  )
+
+```
+\
+Let's plot the distribution of intersection, while intersection = log(β0 * β1).
+\
+```{r}
+weather_boot %>% 
+  ggplot(aes(x = intersection)) +
+  geom_density() +
+  labs(
+    title = "Distribution of Estimates of Coefficients Intersections",
+    x = "Coefficients Estimates Intersection",
+    y = "Density"
+  ) +
+  scale_x_continuous(
+    breaks = seq(1.90, 2.15, .02)
+  )
+```
+\
+Finally, lets calculate and report the 95% confidence interval.
+\
+```{r}
+ci_r_squared = quantile(weather_boot$r.squared, c(0.025, 0.975))
+ci_intersection = quantile(weather_boot$intersection, c(0.025, 0.975))
+
+ci_r_squared
+ci_intersection
+```
+
+**Comments:**
+\
+The distribution of estimated r-squared is approximately normal. With the mean `r mean(weather_boot$r.squared)` and median `r median(weather_boot$r.squared)`. And the standard error of this distribution is `r sd(weather_boot$r.squared)`. Ranging from `r min(weather_boot$r.squared)` to `r max(weather_boot$r.squared)`.
+\
+\
+The distribution of the natural log of the intersection of estimated coefficients is approximately normal. With the mean `r mean(weather_boot$intersection)` and median `r median(weather_boot$intersection)`. And the standard error of this distribution is `r sd(weather_boot$intersection)`. Ranging from `r min(weather_boot$intersection)` to `r max(weather_boot$intersection)`.
+\
+\
+ With 95% confidence, the r-squared value, which measures the goodness of fit of the regression model, lies between 0.894 and 0.927.  With 95% confidence, the value of log(β0 * β1), which reflects the logarithm of the product of the intercept and slope coefficients, lies between 1.96 and 2.06.
+
