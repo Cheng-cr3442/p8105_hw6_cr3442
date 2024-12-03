@@ -128,7 +128,7 @@ ci_intersection
 ```
 
 **Comments:**
-\
+
 The distribution of estimated r-squared is approximately normal. With the mean `r mean(weather_boot$r.squared)` and median `r median(weather_boot$r.squared)`. And the standard error of this distribution is `r sd(weather_boot$r.squared)`. Ranging from `r min(weather_boot$r.squared)` to `r max(weather_boot$r.squared)`.
 \
 \
@@ -236,6 +236,143 @@ models_results_df %>%
 \
 The red dashed line (OR = 1) is the reference line, indicating that male and female victims are equally likely to have their cases resolved. Most cities have confidence intervals that include OR = 1, indicating that gender differences in these cities are not statistically significant. 
 \
+\
 However, the adjusted odds ratios (ORs) for different cities range widely, from close to 0 to over 3, showing significant differences in gender differences between cities. In cities where the OR is significantly lower than 1 (such as some cities on the far left, such as New York, NY), it indicates that female victims have a higher likelihood of having their cases resolved. In cities where the OR is significantly higher than 1 (such as Albuquerque, NM and Stockton, CA on the far right), male victims have a higher likelihood of having their cases resolved. However, in some cities, the confidence intervals are wide, which may reflect insufficient sample size or unstable data. 
 \
+\
 But overall, male victims are slightly less likely to have their cases resolved than female victims.
+
+# Problem 3
+
+First read and clean the dataset.
+\
+```{r birth_data}
+baby_df = 
+  read_csv("data/birthweight.csv") %>% 
+  mutate(
+    babysex = case_when(babysex == 1~"male", babysex == 2~"female"),
+    malform = case_when(malform == 0~"absent", malform == 1 ~ "present")
+    ) %>% 
+  mutate(
+    across(
+      .cols = c("frace", "mrace"),
+      ~ case_when(
+        .x == 1 ~ "White",
+        .x == 2 ~ "Black",
+        .x == 3 ~ "Asian",
+        .x == 4 ~ "Puero Rican",
+        .x == 8 ~ "Other",
+        .x == 9 ~ "Unknown"
+        )
+      ),
+    across(where(is.character), as.factor)
+    ) 
+
+str(baby_df)
+# sum(is.na(baby_df)) = 0
+```
+\
+Then build a regression model for birthweight. Let's try to regress birthweight on `babysex`,`blength`,`gaweeks`,`momage`,`parity`,`ppwt`,`wtgain`and `smoken`.
+\
+```{r propose_birthweight_reg}
+proposal_model = 
+  lm(bwt ~ babysex + blength + gaweeks + momage + parity + ppwt + wtgain + smoken, data = baby_df)
+
+proposal_model %>% broom::tidy() %>% knitr::kable(digits = 3)
+
+```
+\
+Plot of residuals verses fitted values.
+\
+```{r proposal_plt}
+proposal_plt =
+  baby_df %>% 
+  add_predictions(proposal_model) %>%
+  add_residuals(proposal_model) 
+
+pred_plt1 = 
+  proposal_plt %>% 
+  ggplot(aes(x = pred, y = resid)) +
+  geom_point(aes(size = resid), alpha = .1)
+
+pred_plt2 = 
+  proposal_plt %>% 
+  ggplot(aes(x = bwt, y = pred)) +
+  geom_point(alpha = .1)
+
+pred_plt3 = 
+  proposal_plt %>% 
+  ggplot(aes(x = resid))+
+  geom_density()
+
+print(pred_plt1)
+
+print(pred_plt2)
+
+print(pred_plt3)
+
+```
+\
+**Comments:**
+\
+The residuals appear larger at lower predicted values.
+\
+\
+The model fit is good when birth weight is between 2000 g and 4000 g.
+\
+\
+The residual distribution is approximately normal (with longer tails).
+Let's do the model comparison.
+\
+\
+Finally, perform model comparison and cross validation.
+\
+```{r baby_crossvalidation}
+# Take a look at the regressions first
+my_model = lm(bwt ~ babysex + blength + gaweeks + momage + parity + ppwt + wtgain + smoken, data = baby_df)
+simple_model = lm(bwt ~ bhead + gaweeks, data = baby_df)
+complex_model = lm(bwt ~ bhead*blength*babysex, data = baby_df)
+
+baby_df %>% 
+  gather_predictions(my_model, simple_model, complex_model) %>% 
+  mutate(model = fct_inorder(model)) %>% 
+  ggplot(aes(x = bhead, y = bwt)) + 
+  geom_point(alpha = .1, color = "green" ) + 
+  geom_line(aes(y = pred), color = "blue", alpha = .8) + 
+  facet_wrap(~model)
+
+baby_cv = 
+  crossv_mc(baby_df, 100) %>% 
+  mutate(
+    my_model = map(train,  ~lm(bwt ~ babysex + blength + gaweeks + momage + parity + ppwt + wtgain + smoken, data = .x)),
+    simple_model = map(train, ~lm(bwt ~ bhead + gaweeks, data = .x)),
+    complex_model = map(train, ~lm(bwt ~ bhead*blength*babysex, data = .x)),
+    rmse_my = map2_dbl(my_model, test, ~rmse(model = .x, data = .y)),
+    rmse_simple = map2_dbl(simple_model, test, ~rmse(model = .x, data = .y)),
+    rmse_complex = map2_dbl(complex_model, test, ~rmse(model = .x, data = .y))
+  )
+
+baby_cv_tidy = 
+  baby_cv %>% 
+  select(starts_with("rmse")) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "model",
+    values_to = "rmse",
+    names_prefix = "rmse_"
+  ) %>% 
+  mutate(model = fct_inorder(model))
+  
+
+baby_cv_tidy %>% 
+  ggplot(aes(x = model, y = rmse, group = model, color = model)) +
+  geom_violin(alpha = .3) +
+  theme(legend.position = "none") +
+  labs(
+    title = "RMSE for Three Models",
+    x = "Models",
+    y = "RMSE"
+  )
+```
+\
+Then we got the crossvalidation results from above. 
